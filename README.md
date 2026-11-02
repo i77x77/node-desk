@@ -14,7 +14,7 @@
 ## Debian
 
 ```sh
-sudo apt install ./node-desk_4.0.0_all.deb
+sudo apt install ./node-desk_4.0.1_all.deb
 ```
 
 Запуск: **Node Desk** в меню или `node-desk`. Старое имя команды `tailscale-exit-ui` также работает.
@@ -31,8 +31,8 @@ sudo tailscale set --operator="$USER"
 
 Для готовых сборок требуется macOS 15+. Выберите DMG для процессора:
 
-- `node-desk_4.0.0_macos_arm64.dmg` — Apple Silicon.
-- `node-desk_4.0.0_macos_x86_64.dmg` — Intel.
+- `node-desk_4.0.1_macos_arm64.dmg` — Apple Silicon.
+- `node-desk_4.0.1_macos_x86_64.dmg` — Intel.
 
 Откройте DMG и перетащите **Node Desk.app** в **Applications**.
 Python и зависимости входят в приложение. SSH уже есть в macOS; Tailscale устанавливается отдельно.
@@ -112,14 +112,14 @@ Workflow: `.github/workflows/release.yml`.
 git add .
 git commit -m "Add macOS support and dual-platform releases"
 git push origin HEAD
-git tag v4.0.0
-git push origin v4.0.0
+git tag v4.0.1
+git push origin v4.0.1
 ```
 
 GitHub Actions собирает Debian-пакет, macOS arm64 и macOS x86_64 на соответствующих runner. Перед публикацией выполняются тесты и smoke test интерфейса. Успешные сборки создают два отдельных релиза на одном исходном commit:
 
-- `v4.0.0-debian` — `.deb`.
-- `v4.0.0-macos` — два `.dmg`, для Apple Silicon и Intel.
+- `v4.0.1-debian` — `.deb`.
+- `v4.0.1-macos` — два `.dmg`, для Apple Silicon и Intel.
 
 Для GitHub Release используется стандартный `GITHUB_TOKEN` с `contents: write` только у задач публикации. Личный токен не нужен. Политика организации должна разрешать запись в Releases. Ошибка одной платформы не публикует её релиз и не мешает успешному релизу другой.
 
