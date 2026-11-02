@@ -2,6 +2,7 @@ name: Build Debian and macOS releases
 
 on:
   push:
+    branches: [main]
     tags: ['v*']
   workflow_dispatch:
 
@@ -18,12 +19,13 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           TAG: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
         run: |
           python3 - <<'PY'
           import os, pathlib, re
           version = pathlib.Path('VERSION').read_text().strip()
           assert re.fullmatch(r'\d+\.\d+\.\d+', version), 'Invalid VERSION'
-          if os.environ['EVENT'] == 'push':
+          if os.environ['EVENT'] == 'push' and os.environ['REF_TYPE'] == 'tag':
               assert os.environ['TAG'] == 'v' + version, 'Tag must match VERSION'
           PY
 

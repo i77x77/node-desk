@@ -14,7 +14,7 @@
 ## Debian
 
 ```sh
-sudo apt install ./node-desk_4.0.2_all.deb
+sudo apt install ./node-desk_4.0.3_all.deb
 ```
 
 Запуск: **Node Desk** в меню или `node-desk`. Старое имя команды `tailscale-exit-ui` также работает.
@@ -31,8 +31,8 @@ sudo tailscale set --operator="$USER"
 
 Для готовых сборок требуется macOS 15+. Выберите DMG для процессора:
 
-- `node-desk_4.0.2_macos_arm64.dmg` — Apple Silicon.
-- `node-desk_4.0.2_macos_x86_64.dmg` — Intel.
+- `node-desk_4.0.3_macos_arm64.dmg` — Apple Silicon.
+- `node-desk_4.0.3_macos_x86_64.dmg` — Intel.
 
 Откройте DMG и перетащите **Node Desk.app** в **Applications**.
 Python и зависимости входят в приложение. SSH уже есть в macOS; Tailscale устанавливается отдельно.
@@ -105,21 +105,22 @@ Debian-пакет будет в `dist/`. Сборка не требует sudo; 
 Workflow: `.github/workflows/release.yml`.
 
 1. Версия задаётся в `VERSION`.
-2. Commit и push изменений в свой репозиторий.
-3. Push базового тега, совпадающего с версией:
+2. Commit и push изменений в `main`: Actions автоматически проверит обе платформы и соберёт артефакты без публикации релизов.
+3. Дождитесь успешных сборок Debian и обеих архитектур Mac. Только после этого отправьте базовый тег, совпадающий с версией:
 
 ```sh
 git add .
-git commit -m "Add macOS support and dual-platform releases"
+git commit -m "Fix macOS helper path tests and add branch CI"
 git push origin HEAD
-git tag v4.0.2
-git push origin v4.0.2
+# Дождитесь успешной проверки main в GitHub Actions.
+git tag v4.0.3
+git push origin v4.0.3
 ```
 
 GitHub Actions собирает Debian-пакет, macOS arm64 и macOS x86_64 на соответствующих runner. Перед публикацией выполняются тесты и smoke test интерфейса. Успешные сборки создают два отдельных релиза на одном исходном commit:
 
-- `v4.0.2-debian` — `.deb`.
-- `v4.0.2-macos` — два `.dmg`, для Apple Silicon и Intel.
+- `v4.0.3-debian` — `.deb`.
+- `v4.0.3-macos` — два `.dmg`, для Apple Silicon и Intel.
 
 Для GitHub Release используется стандартный `GITHUB_TOKEN` с `contents: write` только у задач публикации. Личный токен не нужен. Политика организации должна разрешать запись в Releases. Ошибка одной платформы не публикует её релиз и не мешает успешному релизу другой.
 

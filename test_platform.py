@@ -80,8 +80,24 @@ class PlatformTests(unittest.TestCase):
             helper.touch()
             with patch.object(ssh.sys, 'frozen', True, create=True), patch.object(ssh.sys, 'executable', str(contents / 'MacOS' / 'Node Desk')):
                 executable, command = ssh.helper_invocation()
-                self.assertEqual(executable, str(helper))
-                self.assertEqual(command, [str(helper)])
+                self.assertEqual(executable, str(helper.resolve()))
+                self.assertEqual(command, [str(helper.resolve())])
+
+    def test_frozen_helper_through_symlinked_directory(self):
+        # Reproduce macOS /var -> /private/var on every test platform.
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'real').mkdir()
+            (root / 'alias').symlink_to(root / 'real', target_is_directory=True)
+            contents = root / 'alias' / 'Node Desk.app' / 'Contents'
+            helper = contents / 'Helpers' / 'node-desk-helper' / 'node-desk-helper'
+            helper.parent.mkdir(parents=True)
+            helper.touch()
+            with patch.object(ssh.sys, 'frozen', True, create=True), patch.object(ssh.sys, 'executable', str(contents / 'MacOS' / 'Node Desk')):
+                executable, command = ssh.helper_invocation()
+                self.assertTrue(Path(executable).samefile(helper))
+                self.assertEqual(executable, str(helper.resolve()))
+                self.assertEqual(command, [executable])
 
 
 if __name__ == '__main__':
