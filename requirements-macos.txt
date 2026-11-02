@@ -1,0 +1,2 @@
+keyring>=25,<26
+pyinstaller>=6.11,<7

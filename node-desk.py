@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Small Debian desktop frontend for the installed Tailscale CLI."""
+"""Node Desk desktop client for SSH and Tailscale on Linux and macOS."""
 import ipaddress
 import json
 import os
@@ -9,9 +9,12 @@ import shutil
 import subprocess
 import threading
 import sys
-sys.path.insert(0, "/usr/lib/node-desk")
+if sys.platform.startswith("linux"):
+    sys.path.append("/usr/lib/node-desk")
 import tkinter as tk
 from tkinter import ttk, messagebox
+
+from platform_support import config_dir, tailscale_binary
 
 DEFAULT_IP = '100.114.10.75'
 
@@ -41,18 +44,24 @@ def describe_status(data):
 
 
 def run_cli(args, privileged=False):
-    binary = shutil.which('tailscale')
+    binary = tailscale_binary()
     if not binary:
-        raise RuntimeError('Tailscale не установлен. Установите его с tailscale.com/download/linux.')
+        raise RuntimeError('Tailscale не установлен. Установите его с tailscale.com/download.')
     command = [os.path.realpath(binary), *args]
+    env = os.environ.copy()
+    if sys.platform == 'darwin':
+        env['TAILSCALE_BE_CLI'] = '1'
     try:
         result = subprocess.run(command, capture_output=True, text=True,
-                                timeout=10)
+                                timeout=10, env=env)
     except subprocess.TimeoutExpired:
         raise RuntimeError('Время ожидания истекло. Проверьте статус: команда могла уже примениться.') from None
     if result.returncode:
         if privileged and any(word in (result.stderr or '').lower() for word in
                               ('access denied', 'permission denied', 'must be root', 'use sudo', 'not allowed')):
+            if sys.platform == 'darwin':
+                raise RuntimeError('Нет прав управления Tailscale. Откройте приложение Tailscale, '
+                                   'войдите в сеть и проверьте разрешения.\n' + result.stderr.strip())
             raise RuntimeError('Нет прав управления Tailscale. Выполните один раз в терминале:\n'
                                'sudo tailscale set --operator="$USER"\n'
                                'Это разрешит вашему пользователю управлять Tailscale без пароля.')
@@ -69,7 +78,7 @@ class App:
         self.closed = False
         self.selected = False
         self.known = False
-        self.config = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config') / 'tailscale-exit-ui' / 'config.json'
+        self.config = config_dir() / 'config.json'
         saved = DEFAULT_IP
         try:
             saved = validate_ip(json.loads(self.config.read_text()).get('ip', DEFAULT_IP))
@@ -303,4 +312,27 @@ class App:
 
 
 if __name__ == '__main__':
-    App(tk.Tk()).root.mainloop()
+    if len(sys.argv) > 2 and sys.argv[1] == '--smoke-test':
+        # Never run the CI fixture against a user's real server list.
+        if not os.environ.get('NODE_DESK_CONFIG_DIR'):
+            raise SystemExit('Smoke test requires NODE_DESK_CONFIG_DIR pointing to a temporary folder.')
+        output = Path(sys.argv[2])
+        root = tk.Tk()
+        App.refresh = lambda self: None
+        app = App(root)
+        root.update()
+        from ssh_client import credentials
+        app.ssh_tab.store.save(None, 'Smoke test', 'Temporary build verification', credentials('192.0.2.1', 'test', 22))
+        app.ssh_tab.show_list()
+        root.update()
+        for page in app.tabs.tabs():
+            app.tabs.select(page)
+            root.update()
+        app.ssh_tab.edit()
+        root.update()
+        app.ssh_tab.show_list()
+        root.update()
+        output.write_text(json.dumps({'ok': True, 'tabs': len(app.tabs.tabs()), 'platform': sys.platform}))
+        root.destroy()
+    else:
+        App(tk.Tk()).root.mainloop()

@@ -84,7 +84,7 @@ class SSHTests(unittest.TestCase):
 
     def test_launch_has_no_password_in_environment_or_command(self):
         server = dict(ssh.credentials('1.2.3.4', 'root', 22), secret_key='server:example', password='MUST_NOT_LEAK')
-        with patch.object(ssh.shutil, 'which', return_value='/usr/bin/ssh'), patch.object(ssh, 'terminal_command', side_effect=lambda c: ['terminal', '-e', *c]), patch.object(ssh.subprocess, 'Popen') as popen:
+        with patch.object(ssh.sys, 'platform', 'linux'), patch.object(ssh, 'helper_invocation', return_value=('/helper', [ssh.sys.executable, '/ssh_helper.py'])), patch.object(ssh.shutil, 'which', return_value='/usr/bin/ssh'), patch.object(ssh, 'terminal_command', side_effect=lambda c: ['terminal', '-e', *c]), patch.object(ssh.subprocess, 'Popen') as popen:
             ssh.launch_server(server)
             command = popen.call_args.args[0]
             env = popen.call_args.kwargs['env']

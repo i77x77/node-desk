@@ -1,16 +1,19 @@
 #!/usr/bin/python3
-"""SSH UI and OpenSSH askpass helper. Secrets use Secret Service only."""
+"""SSH UI and helper using platform credential stores."""
 import json
 import ipaddress
 import os
 from pathlib import Path
 import re
 import shutil
+import shlex
 import subprocess
 import sys
 import uuid
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
+
+from platform_support import config_dir
 
 SERVICE = 'tailscale-exit-ui.ssh'
 
@@ -32,7 +35,10 @@ def identity(profile):
 
 def vault():
     # Select explicitly: never fall back to a plaintext keyring backend.
-    from keyring.backends.SecretService import Keyring
+    if sys.platform == 'darwin':
+        from keyring.backends.macOS import Keyring
+    else:
+        from keyring.backends.SecretService import Keyring
     return Keyring()
 
 
@@ -107,7 +113,7 @@ class ServerStore:
             try:
                 vault().set_password(SERVICE, item['secret_key'], password)
             except Exception as exc:
-                raise RuntimeError('Не удалось сохранить пароль в системном хранилище.\nПроверьте Secret Service и разблокируйте хранилище ключей.') from exc
+                raise RuntimeError('Не удалось сохранить пароль в системном хранилище.\nРазблокируйте системное хранилище ключей (Keychain на macOS или Secret Service на Linux).') from exc
             item['has_password'] = True
         updated = [item if old['id'] == server_id else old for old in self.servers]
         if not existing:
@@ -135,24 +141,61 @@ class ServerStore:
         self.servers = updated
 
 
+def helper_invocation():
+    if getattr(sys, 'frozen', False):
+        helper = Path(sys.executable).resolve().parent.parent / 'Helpers' / 'node-desk-helper' / 'node-desk-helper'
+        if not helper.is_file():
+            raise RuntimeError('Не найден SSH helper внутри приложения. Переустановите Node Desk.')
+        return str(helper), [str(helper)]
+    source = Path(__file__).resolve().with_name('ssh_helper.py')
+    # OpenSSH accepts a single executable for SSH_ASKPASS, with no interpreter args.
+    # This wrapper contains only program paths, never credentials or passwords.
+    directory = config_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    wrapper = directory / 'ssh-askpass'
+    temporary = directory / 'ssh-askpass.tmp'
+    temporary.write_text('#!/bin/sh\nexec ' + shlex.join([sys.executable, str(source)]) + ' "$@"\n')
+    temporary.chmod(0o700)
+    temporary.replace(wrapper)
+    return str(wrapper), [sys.executable, str(source)]
+
+
+def mac_terminal_command(command, connection_env):
+    public_env = ['env'] + [f'{key}={value}' for key, value in connection_env.items()]
+    script = ('on run argv\n'
+              'tell application "Terminal"\n'
+              'activate\n'
+              'do script (item 1 of argv)\n'
+              'end tell\n'
+              'end run')
+    return ['/usr/bin/osascript', '-e', script, shlex.join(public_env + command)]
+
+
 def launch_server(server):
-    if not shutil.which('ssh'):
-        raise RuntimeError('Установите пакет openssh-client.')
+    if not shutil.which('ssh') and not Path('/usr/bin/ssh').is_file():
+        raise RuntimeError('Не найден OpenSSH client.')
     profile = credentials(server['host'], server['user'], server['port'])
-    helper = str(Path(__file__).resolve())
-    env = os.environ.copy()
-    env['SSH_ASKPASS'] = helper
-    env['SSH_ASKPASS_REQUIRE'] = 'force'
-    env['TAILSCALE_UI_SSH_PROFILE'] = identity(profile)
-    env['TAILSCALE_UI_SSH_SECRET_KEY'] = server['secret_key']
-    command = [sys.executable, helper, '--session', identity(profile)]
-    subprocess.Popen(terminal_command(command), env=env, start_new_session=True)
+    askpass_path, helper_command = helper_invocation()
+    connection_env = {
+        'SSH_ASKPASS': askpass_path,
+        'SSH_ASKPASS_REQUIRE': 'force',
+        'TAILSCALE_UI_SSH_PROFILE': identity(profile),
+        'TAILSCALE_UI_SSH_SECRET_KEY': server['secret_key'],
+    }
+    command = helper_command + ['--session', identity(profile)]
+    if sys.platform == 'darwin':
+        # Terminal has its own environment; pass only these public connection values.
+        result = subprocess.run(mac_terminal_command(command, connection_env), capture_output=True, text=True, timeout=20)
+        if result.returncode:
+            raise RuntimeError('Не удалось открыть Terminal. Разрешите управление Terminal в настройках macOS.\n' + result.stderr.strip())
+    else:
+        subprocess.Popen(terminal_command(command), env={**os.environ, **connection_env}, start_new_session=True)
 
 
 class SSHFrame(ttk.Frame):
     def __init__(self, parent):
         super().__init__(parent, padding=24)
-        config = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config') / 'tailscale-exit-ui' / 'ssh.json'
+        config = config_dir() / 'ssh.json'
         self.store = ServerStore(config)
         self.current_id = None
         self.show_list()
@@ -192,8 +235,10 @@ class SSHFrame(ttk.Frame):
         self.rows.bind('<Configure>', lambda e: self.canvas.configure(scrollregion=self.canvas.bbox('all')))
         self.note = ttk.Label(self, text='', style='Muted.TLabel')
         self.note.pack(anchor='w', pady=(12, 0))
-        self.canvas.bind('<Button-4>', lambda e: self.canvas.yview_scroll(-2, 'units'))
-        self.canvas.bind('<Button-5>', lambda e: self.canvas.yview_scroll(2, 'units'))
+        self.canvas.bind('<MouseWheel>', lambda e: self.canvas.yview_scroll(-1 if e.delta > 0 else 1, 'units'))
+        if sys.platform != 'darwin':
+            self.canvas.bind('<Button-4>', lambda e: self.canvas.yview_scroll(-2, 'units'))
+            self.canvas.bind('<Button-5>', lambda e: self.canvas.yview_scroll(2, 'units'))
         self.render_rows()
 
     def render_rows(self):
@@ -228,8 +273,10 @@ class SSHFrame(ttk.Frame):
             info.bind('<Return>', lambda event, s=server: self.edit(s))
             ttk.Button(info, text='Открыть →', style='Link.TButton', command=lambda s=server: self.edit(s)).pack(anchor='w', pady=(8, 0))
         def bind_scroll(widget):
-            widget.bind('<Button-4>', lambda e: self.canvas.yview_scroll(-2, 'units'))
-            widget.bind('<Button-5>', lambda e: self.canvas.yview_scroll(2, 'units'))
+            widget.bind('<MouseWheel>', lambda e: self.canvas.yview_scroll(-1 if e.delta > 0 else 1, 'units'))
+            if sys.platform != 'darwin':
+                widget.bind('<Button-4>', lambda e: self.canvas.yview_scroll(-2, 'units'))
+                widget.bind('<Button-5>', lambda e: self.canvas.yview_scroll(2, 'units'))
             for child in widget.winfo_children():
                 bind_scroll(child)
         bind_scroll(self.rows)
@@ -358,18 +405,17 @@ def askpass(prompt):
     return 0
 
 
+def run_session(profile):
+    result = subprocess.run(ssh_command(profile))
+    if result.returncode:
+        print('\nSSH завершился с ошибкой. Код:', result.returncode)
+        try:
+            input('Нажмите Enter, чтобы закрыть окно…')
+        except EOFError:
+            pass
+    return result.returncode
+
+
 if __name__ == '__main__':
-    if len(sys.argv) > 2 and sys.argv[1] == '--session':
-        profile = credentials(**json.loads(sys.argv[2]))
-        result = subprocess.run(ssh_command(profile))
-        if result.returncode:
-            print('\nSSH завершился с ошибкой. Код:', result.returncode)
-            try:
-                input('Нажмите Enter, чтобы закрыть окно…')
-            except EOFError:
-                pass
-        sys.exit(result.returncode)
-    try:
-        sys.exit(askpass(sys.argv[1] if len(sys.argv) > 1 else 'Password:'))
-    except Exception:
-        sys.exit(1)
+    from ssh_helper import main
+    sys.exit(main())

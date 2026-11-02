@@ -1,0 +1,135 @@
+name: Build Debian and macOS releases
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    if: github.event_name == 'workflow_dispatch' || !contains(github.ref_name, '-')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate release version
+        env:
+          EVENT: ${{ github.event_name }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, re
+          version = pathlib.Path('VERSION').read_text().strip()
+          assert re.fullmatch(r'\d+\.\d+\.\d+', version), 'Invalid VERSION'
+          if os.environ['EVENT'] == 'push':
+              assert os.environ['TAG'] == 'v' + version, 'Tag must match VERSION'
+          PY
+
+  debian:
+    needs: version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y python3-tk xvfb dpkg
+      - name: Tests
+        run: /usr/bin/python3 -m unittest discover -p 'test_*.py' -v
+      - name: GUI smoke test
+        run: |
+          config=$(mktemp -d)
+          NODE_DESK_CONFIG_DIR="$config" xvfb-run -a /usr/bin/python3 node-desk.py --smoke-test "$RUNNER_TEMP/debian-gui.json"
+          /usr/bin/python3 -c 'import json,os; r=json.load(open(os.environ["RUNNER_TEMP"]+"/debian-gui.json")); assert r["ok"] and r["tabs"]==2'
+      - name: Build package
+        run: /usr/bin/python3 scripts/build_deb.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: debian
+          path: dist/*.deb
+          if-no-files-found: error
+
+  macos:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Python with Tk
+        run: |
+          brew install python@3.13 python-tk@3.13
+          "$(brew --prefix python@3.13)/bin/python3.13" -m venv .venv
+          .venv/bin/python -m pip install -r requirements-macos.txt
+      - name: Tests
+        run: .venv/bin/python -m unittest discover -p 'test_*.py' -v
+      - name: Build and verify app
+        run: .venv/bin/python scripts/build_macos.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  release-debian:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: debian
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: debian
+          path: assets
+      - name: Publish Debian release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BASE_TAG: ${{ github.ref_name }}
+        run: |
+          tag="${BASE_TAG}-debian"
+          cat > "$RUNNER_TEMP/notes.md" <<'EOF'
+          Debian package for Node Desk. Install with `sudo apt install ./node-desk_*_all.deb`.
+          Updates the previous node-desk / tailscale-exit-ui installation and preserves user settings.
+          EOF
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --target "$GITHUB_SHA" --title "Node Desk ${BASE_TAG#v} — Debian" --notes-file "$RUNNER_TEMP/notes.md" --latest=false
+          fi
+          gh release upload "$tag" assets/*.deb --clobber
+
+  release-macos:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: macos
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: macos-*
+          merge-multiple: true
+          path: assets
+      - name: Publish macOS release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BASE_TAG: ${{ github.ref_name }}
+        run: |
+          tag="${BASE_TAG}-macos"
+          cat > "$RUNNER_TEMP/notes.md" <<'EOF'
+          Node Desk for macOS 15+. Choose arm64 for Apple Silicon or x86_64 for Intel.
+          Open the DMG and drag Node Desk into Applications.
+          These builds are ad-hoc signed, not Apple-notarized. macOS may block the initial launch; review it in Privacy & Security. The app may also request access to Keychain and permission to control Terminal.
+          Tailscale is installed separately. SSH is provided by macOS.
+          EOF
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --target "$GITHUB_SHA" --title "Node Desk ${BASE_TAG#v} — macOS" --notes-file "$RUNNER_TEMP/notes.md" --latest=false
+          fi
+          gh release upload "$tag" assets/*.dmg --clobber
