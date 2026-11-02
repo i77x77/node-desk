@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Node Desk
+Name[ru]=Node Desk
+Comment=SSH connections and Tailscale exit nodes
+Exec=node-desk
+Icon=network-vpn
+Terminal=false
+Categories=Network;
+Keywords=Tailscale;VPN;SSH;Server;
+StartupNotify=false

@@ -1,0 +1,14 @@
+Package: node-desk
+Version: @VERSION@
+Section: net
+Priority: optional
+Architecture: all
+Depends: python3, python3-tk, python3-keyring, python3-secretstorage, openssh-client, x-terminal-emulator
+Recommends: tailscale, gnome-keyring
+Conflicts: tailscale-exit-ui
+Replaces: tailscale-exit-ui
+Provides: tailscale-exit-ui (= @VERSION@)
+Maintainer: Node Desk Authors <noreply@example.com>
+Description: Node Desk desktop client for SSH servers and Tailscale
+ Dark desktop interface with a searchable SSH server list, descriptions,
+ connection profiles, system keyring passwords and Tailscale exit nodes.

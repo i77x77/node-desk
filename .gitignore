@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+dist/
+build/
+*.deb
+.env
+.env.*
+config.json
+ssh.json
+*.pem
+*.key
+id_rsa*
+id_ed25519*
